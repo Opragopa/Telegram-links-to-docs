@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Telegram Posts Exporter</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #eef4f8; color: #17212b; }
+    main { width: min(720px, calc(100% - 32px)); margin: 42px auto; }
+    .card { background: white; border-radius: 20px; padding: 30px; box-shadow: 0 12px 35px #78909c30; }
+    h1 { margin: 0 0 8px; font-size: 28px; } p { color: #637381; line-height: 1.5; }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; } label { display: grid; gap: 7px; color: #52616b; font-size: 14px; }
+    label.full { grid-column: 1 / -1; } input { width: 100%; border: 1px solid #d5e0e7; border-radius: 10px; padding: 12px; font-size: 16px; box-sizing: border-box; }
+    button { margin-top: 20px; border: 0; border-radius: 10px; padding: 13px 18px; background: #229ed9; color: white; font-size: 16px; cursor: pointer; } button:disabled { opacity: .55; }
+    #status { margin-top: 22px; padding: 15px; border-radius: 10px; background: #f5f8fa; white-space: pre-wrap; display: none; font-family: ui-monospace, monospace; font-size: 13px; }
+    .hint { font-size: 13px; margin-top: 16px; } @media (max-width: 560px) { .grid { grid-template-columns: 1fr; } label.full { grid-column: auto; } }
+  </style>
+</head>
+<body><main><section class="card">
+  <h1>Экспорт постов Telegram</h1>
+  <p>Укажите канал и период. Результатом будут ссылки, CSV/JSON и PNG-скриншоты постов.</p>
+  <form id="form"><div class="grid">
+    <label class="full">Канал или ссылка<input name="channel" placeholder="@channel или https://t.me/channel" required></label>
+    <label>API ID<input name="api_id" inputmode="numeric" placeholder="12345678" required></label>
+    <label>API Hash<input name="api_hash" placeholder="из my.telegram.org" required></label>
+    <label>Начало периода<input name="from_date" type="date" required></label>
+    <label>Конец периода<input name="to_date" type="date" required></label>
+  </div><button id="submit">Начать экспорт</button></form>
+  <p class="hint">API ID и API Hash не сохраняются в проекте. При первом запуске Telethon может запросить код входа в терминале.</p>
+  <div id="status"></div>
+</section></main><script>
+const form = document.querySelector('#form'), button = document.querySelector('#submit'), status = document.querySelector('#status');
+form.addEventListener('submit', async (event) => {
+  event.preventDefault(); button.disabled = true; status.style.display = 'block'; status.textContent = 'Запускаем экспорт...';
+  const response = await fetch('/api/export', { method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(Object.fromEntries(new FormData(form))) });
+  const data = await response.json(); if (!response.ok) { status.textContent = data.error || 'Ошибка'; button.disabled = false; return; }
+  const timer = setInterval(async () => { const result = await (await fetch('/api/jobs/' + data.job_id)).json(); status.textContent = result.log_text || result.status;
+    if (result.status === 'done' || result.status === 'error') { clearInterval(timer); button.disabled = false; status.textContent += '\n\nСтатус: ' + result.status; }
+  }, 1000);
+});
+</script></body></html>
