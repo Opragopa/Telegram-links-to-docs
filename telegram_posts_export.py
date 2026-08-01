@@ -108,37 +108,42 @@ async def export(args: argparse.Namespace) -> Path:
     if end <= start:
         raise ValueError("Дата окончания должна быть позже даты начала")
 
-    out_dir = Path(args.output) / f"{channel_slug(args.channel)}_{start.date()}_{(end - timedelta(microseconds=1)).date()}"
+    session = os.environ.get("TG_SESSION", "telegram_posts_export")
+    async with TelegramClient(session, api_id, api_hash) as client:
+        return await export_authenticated(client, args.channel, start, end, args.output)
+
+
+async def export_authenticated(client: TelegramClient, channel: str, start: datetime, end: datetime, output: str = "exports") -> Path:
+    """Export with an already authenticated client (used by the web UI)."""
+    entity = await client.get_entity(channel)
+    out_dir = Path(output) / f"{channel_slug(channel)}_{start.date()}_{(end - timedelta(microseconds=1)).date()}"
     screenshot_dir = out_dir / "screenshots"
     html_dir = out_dir / "html"
     screenshot_dir.mkdir(parents=True, exist_ok=True)
     html_dir.mkdir(parents=True, exist_ok=True)
 
-    session = os.environ.get("TG_SESSION", "telegram_posts_export")
-    async with TelegramClient(session, api_id, api_hash) as client:
-        entity = await client.get_entity(args.channel)
-        channel_name = getattr(entity, "title", None) or getattr(entity, "username", None) or str(args.channel)
-        posts: list[ExportedPost] = []
-        async for message in client.iter_messages(entity, offset_date=end, reverse=True):
-            if not message.date:
-                continue
-            message_date = message.date.astimezone(timezone.utc)
-            if message_date < start:
-                continue
-            if message_date >= end:
-                break
-            post = ExportedPost(
-                id=message.id,
-                date=message_date.isoformat(),
-                text=safe_text(message),
-                url=message_url(entity, message.id),
-                author=getattr(getattr(message, "sender", None), "username", "") or "",
-                has_media=bool(message.media),
-                screenshot=f"screenshots/{message.id}.png",
-            )
-            posts.append(post)
-            await take_screenshot(post, channel_name, html_dir, screenshot_dir)
-            print(f"[{len(posts)}] {post.id}: {post.url}")
+    channel_name = getattr(entity, "title", None) or getattr(entity, "username", None) or str(channel)
+    posts: list[ExportedPost] = []
+    async for message in client.iter_messages(entity, offset_date=end, reverse=True):
+        if not message.date:
+            continue
+        message_date = message.date.astimezone(timezone.utc)
+        if message_date < start:
+            continue
+        if message_date >= end:
+            break
+        post = ExportedPost(
+            id=message.id,
+            date=message_date.isoformat(),
+            text=safe_text(message),
+            url=message_url(entity, message.id),
+            author=getattr(getattr(message, "sender", None), "username", "") or "",
+            has_media=bool(message.media),
+            screenshot=f"screenshots/{message.id}.png",
+        )
+        posts.append(post)
+        await take_screenshot(post, channel_name, html_dir, screenshot_dir)
+        print(f"[{len(posts)}] {post.id}: {post.url}")
 
     records = [asdict(post) for post in posts]
     (out_dir / "posts.json").write_text(json.dumps(records, ensure_ascii=False, indent=2), encoding="utf-8")

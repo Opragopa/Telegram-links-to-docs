@@ -9,8 +9,11 @@ if [ ! -x "$VENV_DIR/bin/python" ]; then
   python3 -m venv "$VENV_DIR"
 fi
 
-"$VENV_DIR/bin/python" -m pip install --upgrade pip
-"$VENV_DIR/bin/python" -m pip install -r "$PROJECT_DIR/requirements.txt"
-"$VENV_DIR/bin/playwright" install chromium
+if [ ! -f "$VENV_DIR/.setup-complete" ]; then
+  "$VENV_DIR/bin/python" -m pip install --upgrade pip
+  "$VENV_DIR/bin/python" -m pip install -r "$PROJECT_DIR/requirements.txt"
+  "$VENV_DIR/bin/playwright" install chromium
+  touch "$VENV_DIR/.setup-complete"
+fi
 echo "Откройте http://127.0.0.1:5050"
 exec "$VENV_DIR/bin/python" "$PROJECT_DIR/web_app.py"

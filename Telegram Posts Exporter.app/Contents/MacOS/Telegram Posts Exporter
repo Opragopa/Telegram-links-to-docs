@@ -1,0 +1,5 @@
+#!/bin/bash
+set -euo pipefail
+APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
+PROJECT_DIR="$(cd "$APP_DIR/.." && pwd)"
+exec "$PROJECT_DIR/start.sh"
