@@ -3,8 +3,8 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
-SETUP_MARKER="$VENV_DIR/.setup-complete-v2"
-DATA_DIR="${TG_DATA_DIR:-$HOME/Library/Application Support/Telegram Posts Exporter}"
+SETUP_MARKER="$VENV_DIR/.setup-complete-v3"
+DATA_DIR="${TG_DATA_DIR:-$PROJECT_DIR/data}"
 mkdir -p "$DATA_DIR"
 export TG_DATA_DIR="$DATA_DIR"
 export TG_SESSION="${TG_SESSION:-$DATA_DIR/telegram_posts_export}"

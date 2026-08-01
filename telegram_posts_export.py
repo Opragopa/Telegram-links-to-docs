@@ -46,7 +46,7 @@ def parse_date(value: str, *, end_of_day: bool = False) -> datetime:
 
 
 def channel_slug(value: str) -> str:
-    value = value.strip().rstrip("/").split("/")[-1]
+    value = value.strip().rstrip("/").split("/")[-1].lstrip("@")
     value = re.sub(r"[^a-zA-Z0-9_.-]+", "_", value)
     return value or "channel"
 
@@ -81,6 +81,12 @@ def render_html(post: ExportedPost, channel_name: str) -> str:
 
 
 async def take_screenshot(post: ExportedPost, channel_name: str, html_dir: Path, screenshot_dir: Path) -> None:
+    try:
+        await take_telegram_widget_screenshot(post, screenshot_dir)
+        return
+    except Exception as exc:
+        print(f"Telegram Widget недоступен для поста {post.id}, использую резервный вид: {exc}")
+
     html_path = html_dir / f"{post.id}.html"
     html_path.write_text(render_html(post, channel_name), encoding="utf-8")
     try:
@@ -94,6 +100,25 @@ async def take_screenshot(post: ExportedPost, channel_name: str, html_dir: Path,
         await page.goto(html_path.as_uri())
         await page.screenshot(path=str(screenshot_dir / f"{post.id}.png"), full_page=True)
         await browser.close()
+
+
+async def take_telegram_widget_screenshot(post: ExportedPost, screenshot_dir: Path) -> None:
+    """Capture the official Telegram post widget with real media and reactions."""
+    from playwright.async_api import async_playwright
+
+    separator = "&" if "?" in post.url else "?"
+    widget_url = f"{post.url}{separator}embed=1&mode=tme"
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.launch()
+        page = await browser.new_page(viewport={"width": 1000, "height": 1200}, device_scale_factor=1)
+        try:
+            await page.goto(widget_url, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(1500)
+            widget = page.locator(".tgme_widget_message")
+            await widget.wait_for(state="visible", timeout=15000)
+            await widget.screenshot(path=str(screenshot_dir / f"{post.id}.png"), animations="disabled")
+        finally:
+            await browser.close()
 
 
 async def export(args: argparse.Namespace) -> Path:
@@ -113,7 +138,7 @@ async def export(args: argparse.Namespace) -> Path:
         return await export_authenticated(client, args.channel, start, end, args.output)
 
 
-async def export_authenticated(client: TelegramClient, channel: str, start: datetime, end: datetime, output: str = "exports") -> Path:
+async def export_authenticated(client: TelegramClient, channel: str, start: datetime, end: datetime, output: str = "exports", progress_callback=None) -> Path:
     """Export with an already authenticated client (used by the web UI)."""
     entity = await client.get_entity(channel)
     out_dir = Path(output) / f"{channel_slug(channel)}_{start.date()}_{(end - timedelta(microseconds=1)).date()}"
@@ -123,26 +148,49 @@ async def export_authenticated(client: TelegramClient, channel: str, start: date
     html_dir.mkdir(parents=True, exist_ok=True)
 
     channel_name = getattr(entity, "title", None) or getattr(entity, "username", None) or str(channel)
-    posts: list[ExportedPost] = []
-    async for message in client.iter_messages(entity, offset_date=end, reverse=True):
+    messages = []
+    async for message in client.iter_messages(entity, offset_date=end):
         if not message.date:
             continue
         message_date = message.date.astimezone(timezone.utc)
         if message_date < start:
-            continue
-        if message_date >= end:
             break
+        if message_date >= end:
+            continue
+        messages.append(message)
+
+    grouped_messages = []
+    group_positions = {}
+    for message in messages:
+        group_key = message.grouped_id or f"single:{message.id}"
+        if group_key not in group_positions:
+            group_positions[group_key] = len(grouped_messages)
+            grouped_messages.append([])
+        grouped_messages[group_positions[group_key]].append(message)
+
+    posts: list[ExportedPost] = []
+    total = len(grouped_messages)
+    if progress_callback:
+        await progress_callback(0, total, "Посты найдены. Создаю скриншоты...")
+    for processed, group in enumerate(grouped_messages, start=1):
+        # An album consists of several messages with one grouped_id. Use the
+        # first message in Telegram's link order and merge the album into one post.
+        primary_message = min(group, key=lambda item: item.id)
+        text_message = next((item for item in group if item.message), primary_message)
+        message_date = min(item.date for item in group).astimezone(timezone.utc)
         post = ExportedPost(
-            id=message.id,
+            id=primary_message.id,
             date=message_date.isoformat(),
-            text=safe_text(message),
-            url=message_url(entity, message.id),
-            author=getattr(getattr(message, "sender", None), "username", "") or "",
-            has_media=bool(message.media),
-            screenshot=f"screenshots/{message.id}.png",
+            text=safe_text(text_message),
+            url=message_url(entity, primary_message.id),
+            author=getattr(getattr(text_message, "sender", None), "username", "") or "",
+            has_media=any(bool(item.media) for item in group),
+            screenshot=f"screenshots/{primary_message.id}.png",
         )
         posts.append(post)
         await take_screenshot(post, channel_name, html_dir, screenshot_dir)
+        if progress_callback:
+            await progress_callback(processed, total, post.url)
         print(f"[{len(posts)}] {post.id}: {post.url}")
 
     records = [asdict(post) for post in posts]

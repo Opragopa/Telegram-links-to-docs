@@ -9,12 +9,15 @@ import io
 import json
 import os
 import threading
+import time
 import uuid
+from copy import copy
 from datetime import datetime, timezone
 from pathlib import Path
 
 from flask import Flask, jsonify, render_template, request, send_file
 from openpyxl import Workbook
+from openpyxl.drawing.image import Image as ExcelImage
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
 
@@ -22,7 +25,8 @@ from telegram_posts_export import export_authenticated, parse_date
 
 
 ROOT = Path(__file__).resolve().parent
-DATA_DIR = Path(os.environ.get("TG_DATA_DIR", Path.home() / "Library/Application Support/Telegram Posts Exporter"))
+APP_VERSION = "0.0.3"
+DATA_DIR = Path(os.environ.get("TG_DATA_DIR", ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 TABLE_DIR = DATA_DIR / "table_exports"
 TABLE_DIR.mkdir(parents=True, exist_ok=True)
@@ -36,6 +40,7 @@ auth_phone = ""
 auth_code_hash = ""
 auth_needs_password = False
 jobs: dict[str, dict[str, str]] = {}
+job_futures = {}
 
 
 def load_api_config() -> dict[str, str]:
@@ -48,6 +53,20 @@ def load_api_config() -> dict[str, str]:
 def save_api_config(api_id: str, api_hash: str) -> None:
     CONFIG_PATH.write_text(json.dumps({"api_id": api_id, "api_hash": api_hash}), encoding="utf-8")
     CONFIG_PATH.chmod(0o600)
+
+
+async def ensure_saved_session() -> bool:
+    """Reconnect the saved Telethon session after a web-app restart."""
+    global telegram_client
+    if telegram_client and telegram_client.is_connected():
+        return await telegram_client.is_user_authorized()
+    config = load_api_config()
+    if not config.get("api_id") or not config.get("api_hash"):
+        return False
+    session = os.environ.get("TG_SESSION", str(DATA_DIR / "telegram_posts_export"))
+    telegram_client = TelegramClient(session, int(config["api_id"]), config["api_hash"])
+    await telegram_client.connect()
+    return await telegram_client.is_user_authorized()
 
 
 def run_async(coroutine):
@@ -64,6 +83,7 @@ TABLE_COLUMNS = [
     ("text", "Текст"),
     ("hasMedia", "Есть медиа"),
     ("isForwarded", "Пересланный пост"),
+    ("screenshot", "Скриншот"),
 ]
 
 
@@ -79,7 +99,18 @@ def parse_posts_json(raw: str) -> list[dict]:
     for index, item in enumerate(payload, start=1):
         if not isinstance(item, dict):
             raise ValueError(f"Пост №{index} должен быть объектом JSON")
-        row = {key: item.get(key, "") for key, _ in TABLE_COLUMNS}
+        # Accept both the source export format (messageId/hasMedia) and the
+        # app's own posts.json format (id/has_media).
+        aliases = {
+            "messageId": ("messageId", "id"),
+            "hasMedia": ("hasMedia", "has_media"),
+            "isForwarded": ("isForwarded", "is_forwarded"),
+            "screenshot": ("screenshot", "screenshot_path"),
+        }
+        row = {}
+        for key, _ in TABLE_COLUMNS:
+            candidates = aliases.get(key, (key,))
+            row[key] = next((item[name] for name in candidates if name in item), "")
         if row["messageId"] == "":
             raise ValueError(f"У поста №{index} отсутствует messageId")
         row["text"] = str(row["text"] or "")
@@ -87,6 +118,14 @@ def parse_posts_json(raw: str) -> list[dict]:
         row["isForwarded"] = "Да" if bool(row["isForwarded"]) else "Нет"
         rows.append(row)
     return rows
+
+
+def find_screenshot(relative_path: str) -> Path | None:
+    if not relative_path:
+        return None
+    filename = Path(relative_path).name
+    candidates = list((DATA_DIR / "exports").rglob(filename))
+    return next((path for path in candidates if path.parent.name == "screenshots"), None)
 
 
 def create_table_exports(raw: str) -> tuple[str, str, int]:
@@ -109,15 +148,33 @@ def create_table_exports(raw: str) -> tuple[str, str, int]:
         sheet.append([row[key] for key, _ in TABLE_COLUMNS])
     sheet.freeze_panes = "A2"
     sheet.auto_filter.ref = sheet.dimensions
-    widths = {"A": 22, "B": 12, "C": 42, "D": 24, "E": 12, "F": 80, "G": 14, "H": 20}
+    # Excel images are anchored to cells rather than being true cell values.
+    # Keep the image column and row dimensions within Excel's limits so the
+    # complete screenshot remains visible without cropping or overlap.
+    widths = {"A": 22, "B": 12, "C": 42, "D": 24, "E": 12, "F": 80, "G": 14, "H": 20, "I": 72}
     for column, width in widths.items():
         sheet.column_dimensions[column].width = width
     for cell in sheet[1]:
-        cell.font = cell.font.copy(bold=True)
+        font = copy(cell.font)
+        font.bold = True
+        cell.font = font
     for row in sheet.iter_rows(min_row=2):
         row[2].hyperlink = row[2].value or None
         row[2].style = "Hyperlink"
-        row[5].alignment = row[5].alignment.copy(wrap_text=True, vertical="top")
+        alignment = copy(row[5].alignment)
+        alignment.wrap_text = True
+        alignment.vertical = "top"
+        row[5].alignment = alignment
+        screenshot_path = find_screenshot(row[8].value)
+        if screenshot_path:
+            image = ExcelImage(str(screenshot_path))
+            max_width = 500
+            max_height = 500
+            scale = min(max_width / image.width, max_height / image.height, 1)
+            image.width = max(1, round(image.width * scale))
+            image.height = max(1, round(image.height * scale))
+            sheet.add_image(image, f"I{row[0].row}")
+            sheet.row_dimensions[row[0].row].height = min(image.height * 0.75 + 8, 409.5)
     workbook.save(xlsx_path)
     return xlsx_path.name, csv_path.name, len(rows)
 
@@ -161,19 +218,42 @@ async def export_job(job_id: str, channel: str, from_date: str, to_date: str) ->
     try:
         start = parse_date(from_date)
         end = parse_date(to_date, end_of_day=True)
+        started = time.monotonic()
         with state_lock:
-            jobs[job_id].update(status="running", log="Собираю посты и создаю скриншоты...")
-        output = await export_authenticated(telegram_client, channel, start, end, str(DATA_DIR / "exports"))
+            jobs[job_id].update(status="running", log="Собираю список постов...", started_at=started)
+
+        async def update_progress(processed: int, total: int, detail: str) -> None:
+            elapsed = time.monotonic() - started
+            average = elapsed / processed if processed else 0
+            remaining = max(total - processed, 0)
+            with state_lock:
+                jobs[job_id].update(
+                    processed=processed,
+                    total=total,
+                    progress=round(processed / total * 100) if total else 0,
+                    elapsed_seconds=round(elapsed),
+                    eta_seconds=round(average * remaining) if processed else None,
+                    log=detail,
+                )
+
+        output = await export_authenticated(
+            telegram_client, channel, start, end, str(DATA_DIR / "exports"), progress_callback=update_progress
+        )
+        elapsed = round(time.monotonic() - started)
         with state_lock:
-            jobs[job_id].update(status="done", log=f"Готово. Результаты: {output}")
+            jobs[job_id].update(status="done", progress=100, elapsed_seconds=elapsed, eta_seconds=0, log=f"Готово за {elapsed} сек. Результаты: {output}")
     except Exception as exc:
         with state_lock:
             jobs[job_id].update(status="error", log=f"Ошибка: {exc}")
+    except asyncio.CancelledError:
+        with state_lock:
+            jobs[job_id].update(status="cancelled", log="Экспорт остановлен. Уже созданные файлы сохранены.")
+        raise
 
 
 @app.get("/")
 def index():
-    return render_template("index.html")
+    return render_template("index.html", app_version=APP_VERSION)
 
 
 @app.post("/api/auth/start")
@@ -205,7 +285,7 @@ def auth_verify():
 
 @app.get("/api/auth/status")
 def auth_status():
-    return jsonify(authorized=bool(telegram_client and run_async(telegram_client.is_user_authorized())))
+    return jsonify(authorized=run_async(ensure_saved_session()))
 
 
 @app.get("/api/config")
@@ -252,15 +332,15 @@ def download_table(filename: str):
 @app.post("/api/export")
 def start_export():
     data = request.get_json(silent=True) or {}
-    if not telegram_client or not run_async(telegram_client.is_user_authorized()):
+    if not run_async(ensure_saved_session()):
         return jsonify(error="Сначала войдите в Telegram"), 401
     channel, from_date, to_date = (str(data.get(key, "")).strip() for key in ("channel", "from_date", "to_date"))
     if not all((channel, from_date, to_date)):
         return jsonify(error="Заполните канал и период"), 400
     job_id = uuid.uuid4().hex[:10]
     with state_lock:
-        jobs[job_id] = {"status": "queued", "log": "Задача поставлена в очередь"}
-    asyncio.run_coroutine_threadsafe(export_job(job_id, channel, from_date, to_date), loop)
+        jobs[job_id] = {"status": "queued", "log": "Задача поставлена в очередь", "processed": 0, "total": 0, "progress": 0}
+    job_futures[job_id] = asyncio.run_coroutine_threadsafe(export_job(job_id, channel, from_date, to_date), loop)
     return jsonify(job_id=job_id)
 
 
@@ -271,6 +351,21 @@ def job_status(job_id: str):
     if not job:
         return jsonify(error="Задача не найдена"), 404
     return jsonify(**job)
+
+
+@app.post("/api/jobs/<job_id>/cancel")
+def cancel_job(job_id: str):
+    with state_lock:
+        job = jobs.get(job_id)
+        if not job:
+            return jsonify(error="Задача не найдена"), 404
+        if job.get("status") not in {"queued", "running"}:
+            return jsonify(**job)
+        job.update(status="cancelling", log="Останавливаю экспорт...")
+    future = job_futures.get(job_id)
+    if future:
+        future.cancel()
+    return jsonify(status="cancelling")
 
 
 if __name__ == "__main__":
