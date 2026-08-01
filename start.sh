@@ -3,6 +3,10 @@ set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")" && pwd)"
 VENV_DIR="$PROJECT_DIR/.venv"
+DATA_DIR="${TG_DATA_DIR:-$HOME/Library/Application Support/Telegram Posts Exporter}"
+mkdir -p "$DATA_DIR"
+export TG_DATA_DIR="$DATA_DIR"
+export TG_SESSION="${TG_SESSION:-$DATA_DIR/telegram_posts_export}"
 
 if [ ! -x "$VENV_DIR/bin/python" ]; then
   echo "Создаю виртуальное окружение..."

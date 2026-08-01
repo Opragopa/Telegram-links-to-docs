@@ -18,6 +18,8 @@ from telegram_posts_export import export_authenticated, parse_date
 
 
 ROOT = Path(__file__).resolve().parent
+DATA_DIR = Path(os.environ.get("TG_DATA_DIR", Path.home() / "Library/Application Support/Telegram Posts Exporter"))
+DATA_DIR.mkdir(parents=True, exist_ok=True)
 app = Flask(__name__)
 loop = asyncio.new_event_loop()
 threading.Thread(target=loop.run_forever, daemon=True).start()
@@ -38,7 +40,7 @@ async def begin_login(api_id: int, api_hash: str, phone: str) -> str:
     global telegram_client, auth_phone, auth_code_hash, auth_needs_password
     if telegram_client:
         await telegram_client.disconnect()
-    session = os.environ.get("TG_SESSION", str(ROOT / "telegram_posts_export"))
+    session = os.environ.get("TG_SESSION", str(DATA_DIR / "telegram_posts_export"))
     telegram_client = TelegramClient(session, api_id, api_hash)
     await telegram_client.connect()
     if await telegram_client.is_user_authorized():
@@ -75,7 +77,7 @@ async def export_job(job_id: str, channel: str, from_date: str, to_date: str) ->
         end = parse_date(to_date, end_of_day=True)
         with state_lock:
             jobs[job_id].update(status="running", log="Собираю посты и создаю скриншоты...")
-        output = await export_authenticated(telegram_client, channel, start, end, str(ROOT / "exports"))
+        output = await export_authenticated(telegram_client, channel, start, end, str(DATA_DIR / "exports"))
         with state_lock:
             jobs[job_id].update(status="done", log=f"Готово. Результаты: {output}")
     except Exception as exc:

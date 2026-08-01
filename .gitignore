@@ -4,3 +4,4 @@
 __pycache__/
 exports/
 .DS_Store
+dist/

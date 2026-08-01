@@ -1,5 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
-PROJECT_DIR="$(cd "$APP_DIR/.." && pwd)"
+if [ -d "$APP_DIR/Contents/Resources/app" ]; then
+  PROJECT_DIR="$APP_DIR/Contents/Resources/app"
+else
+  PROJECT_DIR="$(cd "$APP_DIR/.." && pwd)"
+fi
 exec "$PROJECT_DIR/start.sh"
