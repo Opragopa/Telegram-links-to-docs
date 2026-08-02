@@ -201,7 +201,7 @@ dialog::backdrop { background: rgba(2, 8, 23, .6); backdrop-filter: blur(3px); }
         <label>Пароль 2FA, если включён<input id="password" type="password"></label>
         <button id="verify" class="wide">Войти</button>
       </div>
-      <p class="hint" style="margin:12px 0 0">API ID и Hash берутся на my.telegram.org и хранятся только на этом компьютере.</p>
+      <p class="hint" id="login-hint" style="margin:12px 0 0">API ID и Hash берутся на my.telegram.org и хранятся только на этом компьютере.</p>
       </div>
     </section>
 
@@ -292,6 +292,7 @@ dialog::backdrop { background: rgba(2, 8, 23, .6); backdrop-filter: blur(3px); }
 const $ = id => document.getElementById(id);
 const nf = new Intl.NumberFormat('ru-RU');
 const state = { posts: [], view: [], exportName: '', sort: { key: 'date', dir: -1 }, selected: new Set(), jobId: '', timer: null };
+let builtinCredentials = false;
 
 /* ---------- helpers ---------- */
 function toast(message) {
@@ -341,7 +342,7 @@ function setAuthorized(authorized) {
 $('relogin').onclick = () => {
   $('login-form').classList.remove('hidden');
   $('login-done').classList.add('hidden');
-  $('api-fields').classList.remove('hidden');
+  if (!builtinCredentials) $('api-fields').classList.remove('hidden');
   $('send-code').disabled = false;
   $('verify').disabled = false;
   $('phone').focus();
@@ -353,7 +354,11 @@ $('send-code').onclick = async () => {
   try {
     const data = await api('/api/auth/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ api_id: $('api_id').value, api_hash: $('api_hash').value, phone: $('phone').value })
+      body: JSON.stringify({
+        api_id: builtinCredentials ? '' : $('api_id').value,
+        api_hash: builtinCredentials ? '' : $('api_hash').value,
+        phone: $('phone').value
+      })
     });
     if (data.status === 'authorized') { setAuthorized(true); log('Вы уже вошли в Telegram.'); return; }
     $('code-box').classList.remove('hidden');
@@ -642,7 +647,11 @@ $('shutdown').onclick = async () => {
   $('from_date').value = isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6));
   try {
     const config = await api('/api/config');
-    if (config.has_api_hash) {
+    builtinCredentials = !!config.builtin_credentials;
+    if (builtinCredentials) {
+      $('api-fields').remove();
+      $('login-hint').textContent = 'Введите номер телефона — Telegram пришлёт код подтверждения. Ключи доступа уже встроены в приложение.';
+    } else if (config.has_api_hash) {
       $('api_id').value = config.api_id;
       $('api-fields').classList.add('hidden');
     }
