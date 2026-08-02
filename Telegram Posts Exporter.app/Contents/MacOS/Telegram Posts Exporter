@@ -1,9 +1,17 @@
 #!/bin/bash
-set -euo pipefail
+set -uo pipefail
 APP_DIR="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ -d "$APP_DIR/Contents/Resources/app" ]; then
   PROJECT_DIR="$APP_DIR/Contents/Resources/app"
 else
   PROJECT_DIR="$(cd "$APP_DIR/.." && pwd)"
 fi
-exec "$PROJECT_DIR/start.sh"
+
+if [ ! -f "$PROJECT_DIR/start.sh" ]; then
+  osascript -e 'display dialog "Файлы приложения не найдены. Перетащите «Telegram Posts Exporter» в папку «Программы» и запустите оттуда." with title "Telegram Posts Exporter" buttons {"OK"} default button 1 with icon stop' >/dev/null 2>&1
+  exit 1
+fi
+
+# Run through bash so a missing execute bit (common after copying from a DMG)
+# cannot make the app quit without a word.
+exec /bin/bash "$PROJECT_DIR/start.sh"
