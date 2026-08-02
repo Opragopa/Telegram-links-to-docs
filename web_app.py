@@ -62,17 +62,30 @@ def load_api_config() -> dict[str, str]:
         return {}
 
 
+def write_config(config: dict) -> None:
+    # DATA_DIR is created at startup, but if the data folder lives on a
+    # removable/network volume it can vanish while the app keeps running;
+    # recreating it here turns a raw OSError into a normal write.
+    try:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        CONFIG_PATH.write_text(json.dumps(config), encoding="utf-8")
+        CONFIG_PATH.chmod(0o600)
+    except OSError as exc:
+        raise RuntimeError(
+            f"Не удалось сохранить настройки в {DATA_DIR}. Проверьте, что эта папка существует и доступна для записи."
+        ) from exc
+
+
 def save_api_config(api_id: str, api_hash: str) -> None:
     config = load_api_config()
     config.update(api_id=api_id, api_hash=api_hash)
-    CONFIG_PATH.write_text(json.dumps(config), encoding="utf-8")
-    CONFIG_PATH.chmod(0o600)
+    write_config(config)
 
 
 def save_last_channel(channel: str) -> None:
     config = load_api_config()
     config["last_channel"] = channel
-    CONFIG_PATH.write_text(json.dumps(config), encoding="utf-8")
+    write_config(config)
 
 
 async def ensure_saved_session() -> bool:
