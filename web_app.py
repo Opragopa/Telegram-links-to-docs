@@ -34,7 +34,7 @@ from telegram_posts_export import export_authenticated, parse_date
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.2.0"
+APP_VERSION = "0.2.1"
 DATA_DIR = Path(os.environ.get("TG_DATA_DIR", ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 EXPORT_DIR = DATA_DIR / "exports"

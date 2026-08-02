@@ -2,7 +2,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")" && pwd)"
-VERSION="${1:-0.2.0}"
+VERSION="${1:-0.2.1}"
 DIST="$ROOT/dist"
 STAGE="$(mktemp -d)"
 APP_NAME="Telegram Posts Exporter.app"
