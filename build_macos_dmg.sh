@@ -17,20 +17,6 @@ cp "$ROOT/start.sh" "$ROOT/web_app.py" "$ROOT/telegram_posts_export.py" "$ROOT/r
 cp "$ROOT/templates/index.html" "$PAYLOAD/templates/index.html"
 chmod +x "$PAYLOAD/start.sh" "$APP/Contents/MacOS/Telegram Posts Exporter"
 
-# Bake in the API credentials so users never have to visit my.telegram.org.
-# Values come from the environment or an untracked credentials.json, never
-# from the repository: it is public. Anyone can extract them from the DMG,
-# so use keys registered for this app and not personal ones you rely on.
-if [ -n "${TG_API_ID:-}" ] && [ -n "${TG_API_HASH:-}" ]; then
-  printf '{"api_id": "%s", "api_hash": "%s"}\n' "$TG_API_ID" "$TG_API_HASH" > "$PAYLOAD/credentials.json"
-  echo "Built-in credentials: api_id $TG_API_ID"
-elif [ -f "$ROOT/credentials.json" ]; then
-  cp "$ROOT/credentials.json" "$PAYLOAD/credentials.json"
-  echo "Built-in credentials: credentials.json"
-else
-  echo "WARNING: no TG_API_ID/TG_API_HASH — users will have to enter their own keys."
-fi
-
 # Keep the bundle version in step with the release being built.
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" "$APP/Contents/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" "$APP/Contents/Info.plist"

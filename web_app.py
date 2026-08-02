@@ -35,10 +35,6 @@ EXPORT_DIR.mkdir(parents=True, exist_ok=True)
 TABLE_DIR = DATA_DIR / "table_exports"
 TABLE_DIR.mkdir(parents=True, exist_ok=True)
 CONFIG_PATH = DATA_DIR / "settings.json"
-# Credentials shipped with the build so users never have to visit
-# my.telegram.org. The file is written by build_macos_dmg.sh from environment
-# variables and is never committed: the repository is public.
-CREDENTIALS_PATH = ROOT / "credentials.json"
 app = Flask(__name__)
 loop = asyncio.new_event_loop()
 threading.Thread(target=loop.run_forever, daemon=True).start()
@@ -52,46 +48,22 @@ job_futures: dict[str, object] = {}
 flask_server = None
 
 
-def builtin_credentials() -> tuple[str, str]:
-    """API credentials baked into this build, if there are any."""
-    api_id = os.environ.get("TG_API_ID", "").strip()
-    api_hash = os.environ.get("TG_API_HASH", "").strip()
-    if not (api_id and api_hash):
-        try:
-            bundled = json.loads(CREDENTIALS_PATH.read_text(encoding="utf-8"))
-            api_id = str(bundled.get("api_id", "")).strip()
-            api_hash = str(bundled.get("api_hash", "")).strip()
-        except (FileNotFoundError, json.JSONDecodeError, OSError, AttributeError):
-            return "", ""
-    return (api_id, api_hash) if api_id and api_hash else ("", "")
-
-
-def load_stored_config() -> dict[str, str]:
+def load_api_config() -> dict[str, str]:
     try:
         return json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
     except (FileNotFoundError, json.JSONDecodeError, OSError):
         return {}
 
 
-def load_api_config() -> dict[str, str]:
-    """Stored settings, with the build's own credentials taking precedence."""
-    config = load_stored_config()
-    api_id, api_hash = builtin_credentials()
-    if api_id:
-        config.update(api_id=api_id, api_hash=api_hash)
-    return config
-
-
 def save_api_config(api_id: str, api_hash: str) -> None:
-    # Only user-supplied keys are stored; built-in ones stay with the build.
-    config = load_stored_config()
+    config = load_api_config()
     config.update(api_id=api_id, api_hash=api_hash)
     CONFIG_PATH.write_text(json.dumps(config), encoding="utf-8")
     CONFIG_PATH.chmod(0o600)
 
 
 def save_last_channel(channel: str) -> None:
-    config = load_stored_config()
+    config = load_api_config()
     config["last_channel"] = channel
     CONFIG_PATH.write_text(json.dumps(config), encoding="utf-8")
 
@@ -434,15 +406,13 @@ def index():
 def auth_start():
     data = request.get_json(silent=True) or {}
     try:
-        api_id, api_hash = builtin_credentials()
-        if not api_id:
-            api_id = str(data.get("api_id", "")).strip()
-            api_hash = str(data.get("api_hash", "")).strip()
-            if api_id and api_hash:
-                save_api_config(api_id, api_hash)
-            else:
-                config = load_stored_config()
-                api_id, api_hash = config.get("api_id", ""), config.get("api_hash", "")
+        api_id = str(data.get("api_id", "")).strip()
+        api_hash = str(data.get("api_hash", "")).strip()
+        if api_id and api_hash:
+            save_api_config(api_id, api_hash)
+        else:
+            config = load_api_config()
+            api_id, api_hash = config.get("api_id", ""), config.get("api_hash", "")
         if not api_id or not api_hash:
             return jsonify(error="Укажите API ID и API Hash с my.telegram.org"), 400
         status = run_async(begin_login(int(api_id), api_hash, str(data.get("phone", "")).strip()))
@@ -474,11 +444,9 @@ def auth_status():
 @app.get("/api/config")
 def api_config():
     config = load_api_config()
-    builtin = bool(builtin_credentials()[0])
     return jsonify(
-        api_id="" if builtin else config.get("api_id", ""),
+        api_id=config.get("api_id", ""),
         has_api_hash=bool(config.get("api_hash")),
-        builtin_credentials=builtin,
         last_channel=config.get("last_channel", ""),
     )
 
