@@ -1,27 +1,662 @@
 <!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>Telegram Posts Exporter</title>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Telegram Posts Exporter</title>
 <style>
-:root{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:#17212b}body{margin:0;background:#eef4f8;padding-bottom:42px}main{width:min(720px,calc(100% - 32px));margin:42px auto}.card{background:white;border-radius:20px;padding:30px;box-shadow:0 12px 35px #78909c30}h1{margin:0 0 8px;font-size:28px}h2{font-size:19px;margin:28px 0 12px}p{color:#637381;line-height:1.5}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}label{display:grid;gap:7px;color:#52616b;font-size:14px}.full{grid-column:1/-1}input{width:100%;border:1px solid #d5e0e7;border-radius:10px;padding:12px;font-size:16px;box-sizing:border-box}button{margin-top:14px;border:0;border-radius:10px;padding:13px 18px;background:#229ed9;color:white;font-size:16px;cursor:pointer}button.secondary{background:#607d8b}button.cancel{background:#c85454}button.close-app{background:#8b4b55;margin-top:0}button:disabled{opacity:.55}.button-row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.step{border-top:1px solid #e8eef2;margin-top:25px;padding-top:5px}.hidden{display:none}#status{margin-top:22px;padding:15px;border-radius:10px;background:#f5f8fa;white-space:pre-wrap;font-family:ui-monospace,monospace;font-size:13px}.hint{font-size:13px}.progress-wrap{margin-top:16px}.progress-track{height:10px;background:#e5edf2;border-radius:99px;overflow:hidden}.progress-bar{height:100%;width:0;background:#229ed9;border-radius:99px;transition:width .3s ease}.progress-bar.indeterminate{width:35%;animation:progress-slide 1.3s infinite ease-in-out}@keyframes progress-slide{0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}.progress-meta{display:flex;justify-content:space-between;margin-top:7px;color:#637381;font-size:13px}.app-footer{display:flex;justify-content:space-between;align-items:center;gap:16px;margin-top:22px}.version{color:#71808a;font-size:12px}@media(max-width:560px){.grid{grid-template-columns:1fr}.full{grid-column:auto}.app-footer{align-items:flex-start;flex-direction:column-reverse}}
-</style></head><body><main><section class="card">
-<h1>Экспорт постов Telegram</h1><p>Войдите в Telegram, выберите канал и укажите период для экспорта.</p>
-<div class="step"><h2>1. Вход в Telegram</h2><div class="grid">
-<label id="api-id-field">API ID<input id="api_id" inputmode="numeric" placeholder="12345678"></label><label id="api-hash-field">API Hash<input id="api_hash" placeholder="из my.telegram.org"></label><label class="full">Номер телефона<input id="phone" placeholder="+79991234567"></label>
-</div><button id="send-code">Получить код</button><div id="code-box" class="hidden"><label style="margin-top:14px">Код из Telegram<input id="code" inputmode="numeric"></label><label style="margin-top:14px">Пароль 2FA, если включён<input id="password" type="password"></label><button id="verify">Войти</button></div></div>
-<div class="step"><h2>2. Экспорт</h2><div class="grid"><label class="full">Канал или ссылка<input id="channel" placeholder="@channel или https://t.me/channel"></label><label>Начало<input id="from_date" type="date"></label><label>Конец<input id="to_date" type="date"></label></div><div class="button-row"><button id="export" disabled>Начать экспорт</button><button id="cancel-export" class="cancel hidden" type="button">Остановить</button></div></div>
-<div class="step"><h2>3. JSON → Excel / Google Таблицы</h2><p class="hint">Загрузите JSON в формате экспорта Telegram или вставьте его текст. Если рядом доступны PNG-скриншоты постов, они будут встроены в Excel целиком.</p><input id="json-file" type="file" accept=".json,application/json"><textarea id="json-text" rows="8" placeholder="Или вставьте сюда JSON-массив..." style="width:100%;margin-top:12px;border:1px solid #d5e0e7;border-radius:10px;padding:12px;font:14px ui-monospace,monospace;box-sizing:border-box"></textarea><button id="convert-json" class="secondary">Сделать таблицу</button><div id="table-result" class="hint" style="margin-top:12px"></div></div>
-<div id="status">Статус: ожидается вход</div><div class="progress-wrap"><div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div><div class="progress-meta"><span id="progress-count">Ожидание запуска</span><span id="progress-time"></span></div></div><p class="hint">API ID и API Hash берутся на my.telegram.org и сохраняются только локально на этом Mac.</p>
-</section><div class="app-footer"><div class="version">Версия {{ app_version }}</div><button id="shutdown" class="close-app" type="button">Закрыть приложение</button></div></main><script>
-const $=id=>document.getElementById(id), status=$('status'), send=$('send-code'), verify=$('verify'), exportButton=$('export'), cancelButton=$('cancel-export'), progressBar=$('progress-bar');
-function show(text){status.textContent=text}
-function formatTime(seconds){if(seconds==null)return '';seconds=Number(seconds)||0;const m=Math.floor(seconds/60),s=seconds%60;return m?`${m} мин ${s} сек`:`${s} сек`}
-function renderJob(job){show(job.log||'');const total=Number(job.total||0),processed=Number(job.processed||0);progressBar.classList.toggle('indeterminate',job.status==='running'&&!total);progressBar.style.width=total?`${job.progress||0}%`:'';$('progress-count').textContent=total?`${processed} из ${total} постов`:job.status==='running'?'Собираю список постов...':'Ожидание запуска';$('progress-time').textContent=job.status==='running'?`Прошло ${formatTime(job.elapsed_seconds)}${job.eta_seconds!=null?' · осталось примерно '+formatTime(job.eta_seconds):''}`:job.status==='done'?`Время: ${formatTime(job.elapsed_seconds)}`:''}
-fetch('/api/config').then(r=>r.json()).then(config=>{if(config.has_api_hash){$('api_id').value=config.api_id;$('api-id-field').classList.add('hidden');$('api-hash-field').classList.add('hidden');show('API-данные уже сохранены на этом Mac. Введите номер телефона.')}});
-send.onclick=async()=>{send.disabled=true;show('Отправляем код...');const r=await fetch('/api/auth/start',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({api_id:$('api_id').value,api_hash:$('api_hash').value,phone:$('phone').value})});const d=await r.json();if(!r.ok){show('Ошибка: '+d.error);send.disabled=false;return}if(d.status==='authorized'){loggedIn();return}$('code-box').classList.remove('hidden');show('Код отправлен в Telegram')};
-verify.onclick=async()=>{verify.disabled=true;const r=await fetch('/api/auth/verify',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({code:$('code').value,password:$('password').value})});const d=await r.json();if(!r.ok){show('Ошибка: '+d.error);verify.disabled=false;return}if(d.status==='password_required'){show('Введите пароль 2FA и нажмите «Войти» ещё раз');verify.disabled=false;return}loggedIn()};
-function loggedIn(){send.disabled=true;verify.disabled=true;exportButton.disabled=false;show('Вы вошли в Telegram. Можно запускать экспорт.')}
-let activeJobId='',jobTimer=null;
-exportButton.onclick=async()=>{exportButton.disabled=true;cancelButton.classList.remove('hidden');show('Запускаем экспорт...');const r=await fetch('/api/export',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({channel:$('channel').value,from_date:$('from_date').value,to_date:$('to_date').value})});const d=await r.json();if(!r.ok){show('Ошибка: '+d.error);exportButton.disabled=false;cancelButton.classList.add('hidden');return}activeJobId=d.job_id;jobTimer=setInterval(async()=>{const result=await(await fetch('/api/jobs/'+activeJobId)).json();renderJob(result);if(['done','error','cancelled'].includes(result.status)){clearInterval(jobTimer);jobTimer=null;exportButton.disabled=false;cancelButton.classList.add('hidden')}},1000)};
-cancelButton.onclick=async()=>{if(!activeJobId)return;cancelButton.disabled=true;show('Останавливаю экспорт...');await fetch('/api/jobs/'+activeJobId+'/cancel',{method:'POST'})};
-$('convert-json').onclick=async()=>{const file=$('json-file').files[0], text=$('json-text').value.trim(), result=$('table-result');const body=new FormData();if(file)body.append('file',file);else body.append('json',text);result.textContent='Обрабатываем JSON...';const r=await fetch('/api/convert-json',{method:'POST',body:file?body:undefined,headers:file?{}:{'Content-Type':'application/json'},...(!file?{body:JSON.stringify({json:text})}:{})});const d=await r.json();if(!r.ok){result.textContent='Ошибка: '+d.error;return}result.innerHTML='Готово: '+d.count+' постов — <a href="'+d.xlsx_url+'">скачать Excel</a> · <a href="'+d.csv_url+'">скачать CSV</a>'};
-$('shutdown').onclick=async()=>{if(!confirm('Закрыть приложение? Активный экспорт будет остановлен, уже созданные файлы сохранятся.'))return;const button=$('shutdown');button.disabled=true;show('Закрываем приложение...');try{await fetch('/api/app/shutdown',{method:'POST'})}catch(_e){}document.body.innerHTML='<main><section class="card"><h1>Приложение закрыто</h1><p>Локальный сервер остановлен. Это окно можно закрыть.</p></section></main>';setTimeout(()=>window.close(),250)};
-</script></body></html>
+:root {
+  --bg: #f1f5f9;
+  --panel: #ffffff;
+  --panel-soft: #f8fafc;
+  --border: #e2e8f0;
+  --text: #0f172a;
+  --muted: #64748b;
+  --accent: #229ed9;
+  --accent-soft: #e0f2fe;
+  --danger: #dc2626;
+  --success: #16a34a;
+  --shadow: 0 1px 2px rgba(15, 23, 42, .06), 0 12px 32px rgba(15, 23, 42, .07);
+  --radius: 14px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --panel: #131c2e;
+    --panel-soft: #1a2438;
+    --border: #26324a;
+    --text: #e8eef7;
+    --muted: #94a3b8;
+    --accent: #38b6ec;
+    --accent-soft: #16344a;
+    --danger: #f87171;
+    --success: #4ade80;
+    --shadow: 0 1px 2px rgba(0, 0, 0, .4), 0 12px 32px rgba(0, 0, 0, .35);
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+h1 { font-size: 17px; margin: 0; letter-spacing: -.01em; }
+h2 { font-size: 14px; margin: 0 0 14px; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+h3 { font-size: 15px; margin: 0 0 4px; }
+
+/* ---------- layout ---------- */
+header {
+  position: sticky; top: 0; z-index: 30;
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 24px;
+  background: color-mix(in srgb, var(--panel) 86%, transparent);
+  backdrop-filter: saturate(1.6) blur(12px);
+  border-bottom: 1px solid var(--border);
+}
+.logo { width: 30px; height: 30px; border-radius: 9px; background: linear-gradient(140deg, #38b6ec, #1c8fc4); display: grid; place-items: center; color: #fff; font-size: 16px; }
+.spacer { flex: 1; }
+.layout { display: grid; grid-template-columns: 350px minmax(0, 1fr); gap: 22px; padding: 22px 24px 40px; align-items: start; }
+.sidebar { display: grid; gap: 16px; position: sticky; top: 78px; }
+.card { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); padding: 18px; box-shadow: var(--shadow); }
+
+/* ---------- controls ---------- */
+label { display: grid; gap: 6px; font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+input, textarea, select {
+  width: 100%; font: inherit; color: var(--text);
+  background: var(--panel-soft); border: 1px solid var(--border);
+  border-radius: 10px; padding: 10px 12px;
+}
+input:focus, textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+input[type=date] { min-height: 41px; }
+.row-2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+button {
+  font: inherit; font-weight: 500; cursor: pointer;
+  border: 1px solid transparent; border-radius: 10px; padding: 10px 15px;
+  background: var(--accent); color: #fff; transition: filter .15s, background .15s;
+}
+button:hover:not(:disabled) { filter: brightness(1.07); }
+button:disabled { opacity: .5; cursor: not-allowed; }
+button.ghost { background: var(--panel-soft); color: var(--text); border-color: var(--border); }
+button.danger { background: transparent; color: var(--danger); border-color: var(--border); }
+button.wide { width: 100%; }
+button.tiny { padding: 5px 9px; font-size: 12px; border-radius: 8px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: -4px 0 14px; }
+.chip { background: var(--panel-soft); border: 1px solid var(--border); color: var(--muted); border-radius: 999px; padding: 5px 11px; font-size: 12px; cursor: pointer; }
+.chip:hover { color: var(--text); border-color: var(--accent); }
+.button-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.hint { font-size: 12px; color: var(--muted); line-height: 1.45; }
+.hidden { display: none !important; }
+
+/* ---------- status ---------- */
+.pill { display: inline-flex; align-items: center; gap: 7px; font-size: 13px; padding: 5px 12px; border-radius: 999px; background: var(--panel-soft); border: 1px solid var(--border); color: var(--muted); }
+.dot { width: 8px; height: 8px; border-radius: 50%; background: var(--muted); }
+.pill.ok { color: var(--success); border-color: color-mix(in srgb, var(--success) 40%, var(--border)); }
+.pill.ok .dot { background: var(--success); }
+.log { font-size: 12px; color: var(--muted); margin-top: 12px; word-break: break-word; min-height: 18px; }
+.log.error { color: var(--danger); }
+.progress-track { height: 6px; background: var(--panel-soft); border: 1px solid var(--border); border-radius: 999px; overflow: hidden; margin-top: 12px; }
+.progress-bar { height: 100%; width: 0; background: var(--accent); border-radius: 999px; transition: width .3s ease; }
+.progress-bar.indeterminate { width: 35%; animation: slide 1.3s infinite ease-in-out; }
+@keyframes slide { from { transform: translateX(-100%); } to { transform: translateX(300%); } }
+.progress-meta { display: flex; justify-content: space-between; gap: 10px; font-size: 12px; color: var(--muted); margin-top: 6px; }
+
+/* ---------- history ---------- */
+.history { display: grid; gap: 6px; max-height: 260px; overflow: auto; margin: 0 -6px; padding: 0 6px; }
+.history-item { text-align: left; width: 100%; background: transparent; color: var(--text); border: 1px solid transparent; padding: 9px 11px; }
+.history-item:hover { background: var(--panel-soft); border-color: var(--border); }
+.history-item.active { background: var(--accent-soft); border-color: var(--accent); }
+.history-item small { display: block; color: var(--muted); font-size: 12px; margin-top: 2px; }
+
+/* ---------- stats ---------- */
+.stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(120px, 1fr)); gap: 10px; margin-bottom: 16px; }
+.stat { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+.stat b { display: block; font-size: 21px; letter-spacing: -.02em; }
+.stat span { font-size: 12px; color: var(--muted); }
+
+/* ---------- table ---------- */
+.toolbar { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; margin-bottom: 14px; }
+.search { flex: 1; min-width: 200px; }
+.table-wrap { background: var(--panel); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); overflow: auto; max-height: calc(100vh - 210px); }
+table { border-collapse: separate; border-spacing: 0; width: 100%; font-size: 14px; }
+thead th {
+  position: sticky; top: 0; z-index: 5;
+  background: var(--panel); border-bottom: 1px solid var(--border);
+  text-align: left; font-size: 12px; font-weight: 600; color: var(--muted);
+  padding: 11px 12px; white-space: nowrap; user-select: none;
+}
+th.sortable { cursor: pointer; }
+th.sortable:hover { color: var(--text); }
+th .arrow { opacity: .35; font-size: 10px; }
+th.sorted .arrow { opacity: 1; color: var(--accent); }
+tbody td { border-bottom: 1px solid var(--border); padding: 10px 12px; vertical-align: top; }
+tbody tr:hover { background: var(--panel-soft); }
+tbody tr:last-child td { border-bottom: 0; }
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; padding-left: 6px; padding-right: 14px; }
+.thumb { width: 72px; height: 72px; object-fit: cover; object-position: top; border-radius: 8px; border: 1px solid var(--border); cursor: zoom-in; background: var(--panel-soft); display: block; }
+.thumb-empty { width: 72px; height: 72px; border-radius: 8px; border: 1px dashed var(--border); display: grid; place-items: center; color: var(--muted); font-size: 11px; text-align: center; }
+.when { white-space: nowrap; font-variant-numeric: tabular-nums; }
+.when small { display: block; color: var(--muted); font-size: 12px; }
+.excerpt { min-width: 240px; }
+.excerpt p { margin: 0; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical; overflow: hidden; }
+.excerpt .more { background: none; border: 0; color: var(--accent); padding: 4px 0 0; font-size: 12px; }
+.tags { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 6px; }
+.tag { font-size: 11px; padding: 2px 7px; border-radius: 6px; background: var(--panel-soft); border: 1px solid var(--border); color: var(--muted); }
+.link-cell { display: flex; align-items: center; gap: 6px; white-space: nowrap; }
+.link-cell a { text-decoration: none; font-variant-numeric: tabular-nums; }
+.link-cell a:hover { text-decoration: underline; }
+.empty { padding: 60px 20px; text-align: center; color: var(--muted); }
+.empty b { display: block; color: var(--text); font-size: 16px; margin-bottom: 6px; }
+
+/* ---------- overlays ---------- */
+dialog { border: 1px solid var(--border); border-radius: var(--radius); background: var(--panel); color: var(--text); padding: 0; max-width: min(760px, 92vw); box-shadow: var(--shadow); }
+dialog::backdrop { background: rgba(2, 8, 23, .6); backdrop-filter: blur(3px); }
+.dialog-head { display: flex; align-items: center; gap: 12px; padding: 16px 18px; border-bottom: 1px solid var(--border); }
+.dialog-body { padding: 18px; max-height: 68vh; overflow: auto; }
+.dialog-body img { width: 100%; border-radius: 10px; border: 1px solid var(--border); margin-top: 14px; }
+.post-text { white-space: pre-wrap; word-break: break-word; margin: 0 0 14px; }
+#lightbox { max-width: 94vw; }
+#lightbox img { display: block; max-width: 100%; max-height: 88vh; border-radius: var(--radius); }
+.toast { position: fixed; bottom: 24px; left: 50%; transform: translate(-50%, 20px); opacity: 0; pointer-events: none; background: var(--text); color: var(--bg); padding: 10px 18px; border-radius: 999px; font-size: 14px; transition: .2s; z-index: 60; }
+.toast.show { opacity: 1; transform: translate(-50%, 0); }
+
+@media (max-width: 1000px) {
+  .layout { grid-template-columns: 1fr; padding: 16px; }
+  .sidebar { position: static; }
+  .table-wrap { max-height: none; }
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="logo">✈</div>
+  <h1>Telegram Posts Exporter</h1>
+  <span id="auth-pill" class="pill"><span class="dot"></span><span id="auth-text">Проверяем вход…</span></span>
+  <div class="spacer"></div>
+  <span class="hint">v{{ app_version }}</span>
+  <button id="shutdown" class="danger">Закрыть приложение</button>
+</header>
+
+<div class="layout">
+  <aside class="sidebar">
+
+    <section class="card" id="login-card">
+      <h2 id="login-title">1. Вход в Telegram</h2>
+      <div id="login-done" class="hidden">
+        <p class="hint" style="margin:0 0 10px">Сессия Telegram сохранена на этом компьютере — повторный вход не нужен.</p>
+        <button id="relogin" class="ghost wide">Войти другим аккаунтом</button>
+      </div>
+      <div id="login-form">
+      <div id="api-fields">
+        <label id="api-id-field">API ID<input id="api_id" inputmode="numeric" placeholder="12345678"></label>
+        <label id="api-hash-field">API Hash<input id="api_hash" placeholder="из my.telegram.org"></label>
+      </div>
+      <label>Номер телефона<input id="phone" placeholder="+79991234567" autocomplete="tel"></label>
+      <button id="send-code" class="wide">Получить код</button>
+      <div id="code-box" class="hidden" style="margin-top:12px">
+        <label>Код из Telegram<input id="code" inputmode="numeric" autocomplete="one-time-code"></label>
+        <label>Пароль 2FA, если включён<input id="password" type="password"></label>
+        <button id="verify" class="wide">Войти</button>
+      </div>
+      <p class="hint" style="margin:12px 0 0">API ID и Hash берутся на my.telegram.org и хранятся только на этом компьютере.</p>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>2. Собрать посты</h2>
+      <label>Канал или ссылка<input id="channel" placeholder="@channel или https://t.me/channel"></label>
+      <div class="row-2">
+        <label>Начало<input id="from_date" type="date"></label>
+        <label>Конец<input id="to_date" type="date"></label>
+      </div>
+      <div class="chips">
+        <button class="chip" data-days="7">7 дней</button>
+        <button class="chip" data-days="30">30 дней</button>
+        <button class="chip" data-range="month">Этот месяц</button>
+        <button class="chip" data-range="prev-month">Прошлый месяц</button>
+      </div>
+      <div class="button-row">
+        <button id="export" disabled style="flex:1">Начать экспорт</button>
+        <button id="cancel-export" class="danger hidden">Остановить</button>
+      </div>
+      <div class="progress-track"><div id="progress-bar" class="progress-bar"></div></div>
+      <div class="progress-meta"><span id="progress-count">Ожидание запуска</span><span id="progress-time"></span></div>
+      <div id="log" class="log">Период включает обе даты.</div>
+    </section>
+
+    <section class="card">
+      <h2>История экспортов</h2>
+      <div id="history" class="history"><p class="hint">Пока пусто — запустите первый экспорт.</p></div>
+    </section>
+
+    <section class="card">
+      <h2>JSON → Excel</h2>
+      <p class="hint" style="margin:0 0 10px">Если у вас уже есть выгрузка постов в JSON, соберите из неё таблицу.</p>
+      <input id="json-file" type="file" accept=".json,application/json">
+      <textarea id="json-text" rows="4" placeholder="…или вставьте JSON-массив" style="margin-top:10px;font:13px ui-monospace,monospace"></textarea>
+      <button id="convert-json" class="ghost wide" style="margin-top:10px">Сделать таблицу</button>
+      <div id="table-result" class="hint" style="margin-top:10px"></div>
+    </section>
+
+  </aside>
+
+  <main>
+    <div id="stats" class="stats hidden"></div>
+
+    <div class="toolbar">
+      <input id="search" class="search" type="search" placeholder="Поиск по тексту, дате или ссылке…">
+      <button id="download-xlsx" class="ghost" disabled>Excel</button>
+      <button id="download-csv" class="ghost" disabled>CSV</button>
+      <button id="copy-links" class="ghost" disabled>Копировать ссылки</button>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr>
+            <th style="width:34px"><input id="select-all" type="checkbox" style="width:auto" title="Выбрать все"></th>
+            <th style="width:88px">Пост</th>
+            <th class="sortable" data-sort="date" style="width:150px">Опубликован <span class="arrow">▼</span></th>
+            <th>Текст</th>
+            <th class="sortable" data-sort="url" style="width:112px">Ссылка <span class="arrow"></span></th>
+            <th class="sortable num" data-sort="views">Просм. <span class="arrow"></span></th>
+            <th class="sortable num" data-sort="reactions">Реакц. <span class="arrow"></span></th>
+            <th class="sortable num" data-sort="forwards">Пересл. <span class="arrow"></span></th>
+          </tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+      <div id="empty" class="empty">
+        <b>Здесь появится таблица постов</b>
+        Войдите в Telegram, выберите канал и период — посты, ссылки и время публикации соберутся автоматически.
+      </div>
+    </div>
+  </main>
+</div>
+
+<dialog id="post-dialog">
+  <div class="dialog-head">
+    <h3 id="dialog-title" style="flex:1">Пост</h3>
+    <button class="ghost tiny" onclick="document.getElementById('post-dialog').close()">Закрыть</button>
+  </div>
+  <div class="dialog-body" id="dialog-body"></div>
+</dialog>
+
+<dialog id="lightbox" onclick="this.close()"><img id="lightbox-img" alt="Скриншот поста"></dialog>
+<div id="toast" class="toast"></div>
+
+<script>
+const $ = id => document.getElementById(id);
+const nf = new Intl.NumberFormat('ru-RU');
+const state = { posts: [], view: [], exportName: '', sort: { key: 'date', dir: -1 }, selected: new Set(), jobId: '', timer: null };
+
+/* ---------- helpers ---------- */
+function toast(message) {
+  const el = $('toast');
+  el.textContent = message;
+  el.classList.add('show');
+  clearTimeout(el.dataset.timer);
+  el.dataset.timer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+function log(text, isError) {
+  $('log').textContent = text;
+  $('log').classList.toggle('error', !!isError);
+}
+function escapeHtml(text) {
+  return String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+}
+function plural(count, one, few, many) {
+  const mod10 = count % 10, mod100 = count % 100;
+  const word = mod10 === 1 && mod100 !== 11 ? one
+    : mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14) ? few : many;
+  return `${nf.format(count)} ${word}`;
+}
+function formatDuration(seconds) {
+  if (seconds == null) return '';
+  seconds = Number(seconds) || 0;
+  const m = Math.floor(seconds / 60), s = seconds % 60;
+  return m ? `${m} мин ${s} сек` : `${s} сек`;
+}
+async function api(url, options) {
+  const response = await fetch(url, options);
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) throw new Error(data.error || `Ошибка ${response.status}`);
+  return data;
+}
+
+/* ---------- auth ---------- */
+function setAuthorized(authorized) {
+  $('auth-pill').classList.toggle('ok', authorized);
+  $('auth-text').textContent = authorized ? 'Вход выполнен' : 'Не авторизован';
+  $('export').disabled = !authorized;
+  $('login-title').textContent = authorized ? '1. Вход в Telegram — выполнен' : '1. Вход в Telegram';
+  $('login-form').classList.toggle('hidden', authorized);
+  $('login-done').classList.toggle('hidden', !authorized);
+  if (authorized) $('code-box').classList.add('hidden');
+}
+
+$('relogin').onclick = () => {
+  $('login-form').classList.remove('hidden');
+  $('login-done').classList.add('hidden');
+  $('api-fields').classList.remove('hidden');
+  $('send-code').disabled = false;
+  $('verify').disabled = false;
+  $('phone').focus();
+};
+
+$('send-code').onclick = async () => {
+  $('send-code').disabled = true;
+  log('Отправляем код…');
+  try {
+    const data = await api('/api/auth/start', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ api_id: $('api_id').value, api_hash: $('api_hash').value, phone: $('phone').value })
+    });
+    if (data.status === 'authorized') { setAuthorized(true); log('Вы уже вошли в Telegram.'); return; }
+    $('code-box').classList.remove('hidden');
+    $('code').focus();
+    log('Код отправлен в Telegram.');
+  } catch (error) {
+    log(error.message, true);
+    $('send-code').disabled = false;
+  }
+};
+
+$('verify').onclick = async () => {
+  $('verify').disabled = true;
+  try {
+    const data = await api('/api/auth/verify', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ code: $('code').value, password: $('password').value })
+    });
+    if (data.status === 'password_required') {
+      log('Введите пароль 2FA и нажмите «Войти» ещё раз.');
+      $('password').focus();
+      $('verify').disabled = false;
+      return;
+    }
+    setAuthorized(true);
+    log('Готово. Можно запускать экспорт.');
+  } catch (error) {
+    log(error.message, true);
+    $('verify').disabled = false;
+  }
+};
+
+/* ---------- date presets ---------- */
+const isoDate = date => date.toISOString().slice(0, 10);
+document.querySelectorAll('.chip').forEach(chip => chip.onclick = () => {
+  const today = new Date();
+  let from = new Date(today), to = new Date(today);
+  if (chip.dataset.days) from.setDate(today.getDate() - Number(chip.dataset.days) + 1);
+  if (chip.dataset.range === 'month') from = new Date(today.getFullYear(), today.getMonth(), 1);
+  if (chip.dataset.range === 'prev-month') {
+    from = new Date(today.getFullYear(), today.getMonth() - 1, 1);
+    to = new Date(today.getFullYear(), today.getMonth(), 0);
+  }
+  $('from_date').value = isoDate(from);
+  $('to_date').value = isoDate(to);
+});
+
+/* ---------- export ---------- */
+$('export').onclick = async () => {
+  $('export').disabled = true;
+  $('cancel-export').classList.remove('hidden');
+  log('Запускаем экспорт…');
+  try {
+    const data = await api('/api/export', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ channel: $('channel').value, from_date: $('from_date').value, to_date: $('to_date').value })
+    });
+    state.jobId = data.job_id;
+    state.timer = setInterval(pollJob, 1000);
+  } catch (error) {
+    log(error.message, true);
+    $('export').disabled = false;
+    $('cancel-export').classList.add('hidden');
+  }
+};
+
+$('cancel-export').onclick = async () => {
+  if (!state.jobId) return;
+  $('cancel-export').disabled = true;
+  await fetch(`/api/jobs/${state.jobId}/cancel`, { method: 'POST' });
+};
+
+async function pollJob() {
+  let job;
+  try { job = await api(`/api/jobs/${state.jobId}`); } catch { return; }
+  const total = Number(job.total || 0), processed = Number(job.processed || 0);
+  $('progress-bar').classList.toggle('indeterminate', job.status === 'running' && !total);
+  $('progress-bar').style.width = total ? `${job.progress || 0}%` : '';
+  $('progress-count').textContent = total ? `${processed} из ${plural(total, 'поста', 'постов', 'постов')}`
+    : job.status === 'running' ? 'Собираю список постов…' : 'Ожидание запуска';
+  $('progress-time').textContent = job.status === 'running'
+    ? `${formatDuration(job.elapsed_seconds)}${job.eta_seconds != null ? ' · ещё ~' + formatDuration(job.eta_seconds) : ''}`
+    : job.status === 'done' ? formatDuration(job.elapsed_seconds) : '';
+  log(job.log || '', job.status === 'error');
+
+  if (!['done', 'error', 'cancelled'].includes(job.status)) return;
+  clearInterval(state.timer);
+  state.timer = null;
+  $('export').disabled = false;
+  $('cancel-export').classList.add('hidden');
+  $('cancel-export').disabled = false;
+  await loadHistory();
+  if (job.export_name) { await loadExport(job.export_name); toast(`Готово: ${job.total} постов`); }
+}
+
+/* ---------- history ---------- */
+async function loadHistory() {
+  const { exports } = await api('/api/exports');
+  const container = $('history');
+  if (!exports.length) { container.innerHTML = '<p class="hint">Пока пусто — запустите первый экспорт.</p>'; return; }
+  container.innerHTML = '';
+  exports.forEach(item => {
+    const button = document.createElement('button');
+    button.className = 'history-item' + (item.name === state.exportName ? ' active' : '');
+    button.innerHTML = `<b>${escapeHtml(item.channel)}</b><small>${escapeHtml(item.from_date)} — ${escapeHtml(item.to_date)} · ${plural(item.count, 'пост', 'поста', 'постов')}</small>`;
+    button.onclick = () => loadExport(item.name);
+    container.appendChild(button);
+  });
+}
+
+async function loadExport(name) {
+  try {
+    const data = await api(`/api/exports/${encodeURIComponent(name)}/posts`);
+    state.exportName = name;
+    state.posts = data.posts;
+    state.selected = new Set();
+    if (data.export && data.export.channel) $('channel').value ||= '@' + data.export.channel;
+    document.querySelectorAll('.history-item').forEach(item => item.classList.remove('active'));
+    await loadHistory();
+    applyView();
+  } catch (error) {
+    log(error.message, true);
+  }
+}
+
+/* ---------- table ---------- */
+function applyView() {
+  const query = $('search').value.trim().toLowerCase();
+  state.view = state.posts.filter(post => !query ||
+    [post.text, post.date_local, post.url, post.media_type].join(' ').toLowerCase().includes(query));
+  const { key, dir } = state.sort;
+  state.view.sort((a, b) => {
+    const left = key === 'date' ? a.date || '' : key === 'url' ? a.id : a[key] ?? 0;
+    const right = key === 'date' ? b.date || '' : key === 'url' ? b.id : b[key] ?? 0;
+    return left < right ? -dir : left > right ? dir : 0;
+  });
+  renderStats();
+  renderRows();
+  const hasPosts = state.posts.length > 0;
+  ['download-xlsx', 'download-csv', 'copy-links'].forEach(id => $(id).disabled = !hasPosts);
+  $('empty').classList.toggle('hidden', state.view.length > 0);
+  if (hasPosts && !state.view.length) $('empty').innerHTML = '<b>Ничего не найдено</b>Измените поисковый запрос.';
+}
+
+function renderStats() {
+  const posts = state.view;
+  if (!posts.length) { $('stats').classList.add('hidden'); return; }
+  const sum = key => posts.reduce((total, post) => total + (Number(post[key]) || 0), 0);
+  const views = sum('views');
+  const withMedia = posts.filter(post => post.media_type).length;
+  const cards = [
+    ['Постов', nf.format(posts.length)],
+    ['Просмотров', nf.format(views)],
+    ['В среднем', nf.format(Math.round(views / posts.length))],
+    ['Реакций', nf.format(sum('reactions'))],
+    ['Пересылок', nf.format(sum('forwards'))],
+    ['С медиа', `${withMedia} / ${posts.length}`],
+  ];
+  $('stats').innerHTML = cards.map(([label, value]) => `<div class="stat"><b>${value}</b><span>${label}</span></div>`).join('');
+  $('stats').classList.remove('hidden');
+}
+
+function renderRows() {
+  const tbody = $('rows');
+  tbody.innerHTML = '';
+  state.view.forEach(post => {
+    const [date, hours] = (post.date_local || ' ').split(' ');
+    const tags = [post.media_type, post.album_size > 1 ? plural(post.album_size, 'файл', 'файла', 'файлов') : '',
+                  post.is_forwarded === 'Да' ? 'репост' : '', post.reactions_detail]
+      .filter(Boolean).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('');
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td><input type="checkbox" style="width:auto" data-id="${post.id}" ${state.selected.has(post.id) ? 'checked' : ''}></td>
+      <td>${post.screenshot_url
+        ? `<img class="thumb" loading="lazy" src="${post.screenshot_url}" alt="Пост ${post.id}">`
+        : '<div class="thumb-empty">без<br>скрина</div>'}</td>
+      <td class="when">${escapeHtml(date)}<small>${escapeHtml(hours || '')}</small></td>
+      <td class="excerpt"><p>${escapeHtml(post.text)}</p>${tags ? `<div class="tags">${tags}</div>` : ''}<button class="more">Открыть пост</button></td>
+      <td><div class="link-cell"><a href="${escapeHtml(post.url)}" target="_blank" rel="noopener">#${post.id}</a><button class="ghost tiny copy" title="Скопировать ссылку">⧉</button></div></td>
+      <td class="num">${nf.format(post.views || 0)}</td>
+      <td class="num">${nf.format(post.reactions || 0)}</td>
+      <td class="num">${nf.format(post.forwards || 0)}</td>`;
+    row.querySelector('input').onchange = event => {
+      event.target.checked ? state.selected.add(post.id) : state.selected.delete(post.id);
+      $('select-all').checked = state.view.every(item => state.selected.has(item.id));
+    };
+    row.querySelector('.more').onclick = () => openPost(post);
+    row.querySelector('.copy').onclick = () => { navigator.clipboard.writeText(post.url); toast('Ссылка скопирована'); };
+    const thumb = row.querySelector('.thumb');
+    if (thumb) thumb.onclick = () => { $('lightbox-img').src = post.screenshot_url; $('lightbox').showModal(); };
+    tbody.appendChild(row);
+  });
+}
+
+function openPost(post) {
+  $('dialog-title').textContent = `Пост #${post.id} · ${post.date_local}`;
+  $('dialog-body').innerHTML = `
+    <p class="post-text">${escapeHtml(post.text)}</p>
+    <div class="tags">
+      <span class="tag">${plural(post.views || 0, 'просмотр', 'просмотра', 'просмотров')}</span>
+      <span class="tag">${plural(post.reactions || 0, 'реакция', 'реакции', 'реакций')}</span>
+      <span class="tag">${plural(post.forwards || 0, 'пересылка', 'пересылки', 'пересылок')}</span>
+      <span class="tag">${plural(post.replies || 0, 'комментарий', 'комментария', 'комментариев')}</span>
+      <span class="tag">${plural(post.char_count || 0, 'символ', 'символа', 'символов')}</span>
+      ${post.media_type ? `<span class="tag">${escapeHtml(post.media_type)}</span>` : ''}
+    </div>
+    <p style="margin-top:14px"><a href="${escapeHtml(post.url)}" target="_blank" rel="noopener">${escapeHtml(post.url)}</a></p>
+    ${post.screenshot_url ? `<img src="${post.screenshot_url}" alt="Скриншот поста">` : ''}`;
+  $('post-dialog').showModal();
+}
+
+$('search').oninput = applyView;
+$('select-all').onchange = event => {
+  state.selected = event.target.checked ? new Set(state.view.map(post => post.id)) : new Set();
+  renderRows();
+};
+document.querySelectorAll('th.sortable').forEach(th => th.onclick = () => {
+  const key = th.dataset.sort;
+  state.sort = { key, dir: state.sort.key === key ? -state.sort.dir : -1 };
+  document.querySelectorAll('th.sortable').forEach(other => {
+    other.classList.toggle('sorted', other === th);
+    other.querySelector('.arrow').textContent = other === th ? (state.sort.dir === 1 ? '▲' : '▼') : '';
+  });
+  applyView();
+});
+
+/* ---------- downloads ---------- */
+async function buildTable(kind) {
+  if (!state.exportName) return;
+  const ids = state.selected.size ? [...state.selected] : null;
+  const button = $(kind === 'xlsx' ? 'download-xlsx' : 'download-csv');
+  button.disabled = true;
+  try {
+    const data = await api(`/api/exports/${encodeURIComponent(state.exportName)}/table`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids })
+    });
+    window.location = kind === 'xlsx' ? data.xlsx_url : data.csv_url;
+    toast(`Таблица готова: ${data.count} постов`);
+  } catch (error) {
+    toast(error.message);
+  } finally {
+    button.disabled = false;
+  }
+}
+$('download-xlsx').onclick = () => buildTable('xlsx');
+$('download-csv').onclick = () => buildTable('csv');
+$('copy-links').onclick = () => {
+  const posts = state.selected.size ? state.view.filter(post => state.selected.has(post.id)) : state.view;
+  navigator.clipboard.writeText(posts.map(post => `${post.date_local}\t${post.url}`).join('\n'));
+  toast(`Скопировано ссылок: ${posts.length}`);
+};
+
+/* ---------- JSON → Excel ---------- */
+$('convert-json').onclick = async () => {
+  const file = $('json-file').files[0], text = $('json-text').value.trim(), result = $('table-result');
+  result.textContent = 'Обрабатываем JSON…';
+  let options;
+  if (file) {
+    const form = new FormData();
+    form.append('file', file);
+    options = { method: 'POST', body: form };
+  } else {
+    options = { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ json: text }) };
+  }
+  try {
+    const data = await api('/api/convert-json', options);
+    result.innerHTML = `Готово: ${data.count} постов — <a href="${data.xlsx_url}">Excel</a> · <a href="${data.csv_url}">CSV</a>`;
+  } catch (error) {
+    result.textContent = error.message;
+  }
+};
+
+/* ---------- shutdown ---------- */
+$('shutdown').onclick = async () => {
+  if (!confirm('Закрыть приложение? Активный экспорт будет остановлен, уже созданные файлы сохранятся.')) return;
+  $('shutdown').disabled = true;
+  try { await fetch('/api/app/shutdown', { method: 'POST' }); } catch {}
+  document.body.innerHTML = '<div class="layout"><section class="card"><h3>Приложение закрыто</h3><p class="hint">Локальный сервер остановлен, это окно можно закрыть.</p></section></div>';
+  setTimeout(() => window.close(), 250);
+};
+
+/* ---------- boot ---------- */
+(async function init() {
+  const today = new Date();
+  $('to_date').value = isoDate(today);
+  $('from_date').value = isoDate(new Date(today.getFullYear(), today.getMonth(), today.getDate() - 6));
+  try {
+    const config = await api('/api/config');
+    if (config.has_api_hash) {
+      $('api_id').value = config.api_id;
+      $('api-fields').classList.add('hidden');
+    }
+    if (config.last_channel) $('channel').value = config.last_channel;
+  } catch {}
+  try {
+    const { authorized } = await api('/api/auth/status');
+    setAuthorized(authorized);
+    log(authorized ? 'Вход выполнен. Выберите канал и период.' : 'Войдите в Telegram, чтобы собрать посты.');
+  } catch { setAuthorized(false); }
+  await loadHistory();
+  const { exports } = await api('/api/exports');
+  if (exports.length) await loadExport(exports[0].name);
+})();
+</script>
+</body>
+</html>
