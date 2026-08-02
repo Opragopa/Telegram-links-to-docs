@@ -201,6 +201,7 @@ dialog::backdrop { background: rgba(2, 8, 23, .6); backdrop-filter: blur(3px); }
         <label>Пароль 2FA, если включён<input id="password" type="password"></label>
         <button id="verify" class="wide">Войти</button>
       </div>
+      <div id="login-status" class="log"></div>
       <p class="hint" style="margin:12px 0 0">API ID и Hash берутся на my.telegram.org и хранятся только на этом компьютере.</p>
       </div>
     </section>
@@ -305,6 +306,10 @@ function log(text, isError) {
   $('log').textContent = text;
   $('log').classList.toggle('error', !!isError);
 }
+function loginLog(text, isError) {
+  $('login-status').textContent = text;
+  $('login-status').classList.toggle('error', !!isError);
+}
 function escapeHtml(text) {
   return String(text ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 }
@@ -342,46 +347,51 @@ $('relogin').onclick = () => {
   $('login-form').classList.remove('hidden');
   $('login-done').classList.add('hidden');
   $('api-fields').classList.remove('hidden');
+  $('code-box').classList.add('hidden');
   $('send-code').disabled = false;
   $('verify').disabled = false;
+  loginLog('');
   $('phone').focus();
 };
 
 $('send-code').onclick = async () => {
+  if (!$('phone').value.trim()) { loginLog('Введите номер телефона.', true); $('phone').focus(); return; }
   $('send-code').disabled = true;
-  log('Отправляем код…');
+  loginLog('Отправляем код…');
   try {
     const data = await api('/api/auth/start', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ api_id: $('api_id').value, api_hash: $('api_hash').value, phone: $('phone').value })
     });
-    if (data.status === 'authorized') { setAuthorized(true); log('Вы уже вошли в Telegram.'); return; }
+    if (data.status === 'authorized') { setAuthorized(true); loginLog('Вы уже вошли в Telegram.'); return; }
     $('code-box').classList.remove('hidden');
     $('code').focus();
-    log('Код отправлен в Telegram.');
+    loginLog('Код отправлен в Telegram — проверьте приложение на телефоне или другом устройстве с Telegram.');
   } catch (error) {
-    log(error.message, true);
+    loginLog(error.message, true);
     $('send-code').disabled = false;
   }
 };
 
 $('verify').onclick = async () => {
+  if (!$('code').value.trim()) { loginLog('Введите код из Telegram.', true); $('code').focus(); return; }
   $('verify').disabled = true;
+  loginLog('Проверяем код…');
   try {
     const data = await api('/api/auth/verify', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ code: $('code').value, password: $('password').value })
     });
     if (data.status === 'password_required') {
-      log('Введите пароль 2FA и нажмите «Войти» ещё раз.');
+      loginLog('Введите пароль 2FA и нажмите «Войти» ещё раз.');
       $('password').focus();
       $('verify').disabled = false;
       return;
     }
     setAuthorized(true);
-    log('Готово. Можно запускать экспорт.');
+    loginLog('Готово. Можно запускать экспорт.');
   } catch (error) {
-    log(error.message, true);
+    loginLog(error.message, true);
     $('verify').disabled = false;
   }
 };
