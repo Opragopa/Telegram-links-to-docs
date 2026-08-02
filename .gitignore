@@ -6,3 +6,4 @@ exports/
 .DS_Store
 dist/
 data/
+setup.log
