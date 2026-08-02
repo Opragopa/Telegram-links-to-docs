@@ -20,12 +20,13 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from telethon import TelegramClient
 from telethon.errors import SessionPasswordNeededError
+from werkzeug.serving import make_server
 
 from telegram_posts_export import export_authenticated, parse_date
 
 
 ROOT = Path(__file__).resolve().parent
-APP_VERSION = "0.0.4"
+APP_VERSION = "0.0.5"
 DATA_DIR = Path(os.environ.get("TG_DATA_DIR", ROOT / "data"))
 DATA_DIR.mkdir(parents=True, exist_ok=True)
 TABLE_DIR = DATA_DIR / "table_exports"
@@ -41,6 +42,7 @@ auth_code_hash = ""
 auth_needs_password = False
 jobs: dict[str, dict[str, str]] = {}
 job_futures = {}
+flask_server = None
 
 
 def load_api_config() -> dict[str, str]:
@@ -368,7 +370,37 @@ def cancel_job(job_id: str):
     return jsonify(status="cancelling")
 
 
+@app.post("/api/app/shutdown")
+def shutdown_app():
+    """Stop active jobs and gracefully stop the local web server."""
+    if flask_server is None:
+        return jsonify(error="Сервер ещё не готов к завершению"), 503
+    with state_lock:
+        active_jobs = [job_id for job_id, job in jobs.items() if job.get("status") in {"queued", "running", "cancelling"}]
+        for job_id in active_jobs:
+            jobs[job_id].update(status="cancelled", log="Приложение закрывается. Уже созданные файлы сохранены.")
+    for job_id in active_jobs:
+        future = job_futures.get(job_id)
+        if future:
+            future.cancel()
+    # Werkzeug must be shut down from another thread, otherwise the current
+    # request can deadlock while the server waits for itself to finish.
+    threading.Thread(target=flask_server.shutdown, daemon=True).start()
+    return jsonify(status="shutting_down")
+
+
 if __name__ == "__main__":
     import webbrowser
-    threading.Timer(1.0, lambda: webbrowser.open("http://127.0.0.1:5050")).start()
-    app.run(host="127.0.0.1", port=int(os.environ.get("PORT", "5050")), debug=False)
+
+    port = int(os.environ.get("PORT", "5050"))
+    flask_server = make_server("127.0.0.1", port, app, threaded=True)
+    threading.Timer(1.0, lambda: webbrowser.open(f"http://127.0.0.1:{port}")).start()
+    try:
+        flask_server.serve_forever()
+    finally:
+        if telegram_client:
+            try:
+                run_async(telegram_client.disconnect())
+            except Exception:
+                pass
+        loop.call_soon_threadsafe(loop.stop)

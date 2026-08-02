@@ -6,6 +6,7 @@
 <key>CFBundleIdentifier</key><string>com.opragopa.telegram-posts-exporter</string>
 <key>CFBundleName</key><string>Telegram Posts Exporter</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleVersion</key><string>1.0.0</string>
-<key>CFBundleShortVersionString</key><string>1.0.0</string>
+<key>CFBundleIconFile</key><string>AppIcon</string>
+<key>CFBundleVersion</key><string>0.0.5</string>
+<key>CFBundleShortVersionString</key><string>0.0.5</string>
 </dict></plist>
