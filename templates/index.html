@@ -348,14 +348,36 @@ $('relogin').onclick = () => {
   $('login-done').classList.add('hidden');
   $('api-fields').classList.remove('hidden');
   $('code-box').classList.add('hidden');
+  clearInterval(resendTimer);
   $('send-code').disabled = false;
+  $('send-code').textContent = 'Получить код';
   $('verify').disabled = false;
   loginLog('');
   $('phone').focus();
 };
 
+let resendTimer = null;
+function startResendCooldown(seconds) {
+  clearInterval(resendTimer);
+  const button = $('send-code');
+  let remaining = seconds;
+  button.disabled = true;
+  button.textContent = `Отправить код ещё раз (${remaining})`;
+  resendTimer = setInterval(() => {
+    remaining -= 1;
+    if (remaining <= 0) {
+      clearInterval(resendTimer);
+      button.disabled = false;
+      button.textContent = 'Отправить код ещё раз';
+      return;
+    }
+    button.textContent = `Отправить код ещё раз (${remaining})`;
+  }, 1000);
+}
+
 $('send-code').onclick = async () => {
   if (!$('phone').value.trim()) { loginLog('Введите номер телефона.', true); $('phone').focus(); return; }
+  clearInterval(resendTimer);
   $('send-code').disabled = true;
   loginLog('Отправляем код…');
   try {
@@ -365,11 +387,16 @@ $('send-code').onclick = async () => {
     });
     if (data.status === 'authorized') { setAuthorized(true); loginLog('Вы уже вошли в Telegram.'); return; }
     $('code-box').classList.remove('hidden');
+    $('code').value = '';
     $('code').focus();
-    loginLog('Код отправлен в Telegram — проверьте приложение на телефоне или другом устройстве с Telegram.');
+    // Telegram sends the login code as a message inside the app itself
+    // (from the official "Telegram" chat), not as an SMS in most cases.
+    loginLog('Код отправлен. Откройте Telegram на телефоне или другом устройстве — там придёт сообщение с кодом (в чате «Telegram», не SMS).');
+    startResendCooldown(30);
   } catch (error) {
     loginLog(error.message, true);
     $('send-code').disabled = false;
+    $('send-code').textContent = 'Получить код';
   }
 };
 
@@ -388,11 +415,14 @@ $('verify').onclick = async () => {
       $('verify').disabled = false;
       return;
     }
+    clearInterval(resendTimer);
     setAuthorized(true);
     loginLog('Готово. Можно запускать экспорт.');
   } catch (error) {
     loginLog(error.message, true);
     $('verify').disabled = false;
+    // A rejected code cannot be reused; clear it so a retry is unambiguous.
+    if (!/пароль/i.test(error.message)) { $('code').value = ''; $('code').focus(); }
   }
 };
 

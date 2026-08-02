@@ -20,7 +20,14 @@ from openpyxl import Workbook
 from openpyxl.drawing.image import Image as ExcelImage
 from openpyxl.utils import get_column_letter
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import (
+    FloodWaitError,
+    PhoneCodeExpiredError,
+    PhoneCodeInvalidError,
+    PhoneNumberBannedError,
+    PhoneNumberInvalidError,
+    SessionPasswordNeededError,
+)
 from werkzeug.serving import make_server
 
 from telegram_posts_export import export_authenticated, parse_date
@@ -313,6 +320,22 @@ def posts_payload(rows: list[dict], export_name: str) -> list[dict]:
     return payload
 
 
+def friendly_auth_error(exc: Exception) -> str:
+    """Translate the Telethon exceptions users actually hit into Russian."""
+    if isinstance(exc, PhoneCodeInvalidError):
+        return "Неверный код. Проверьте, что вводите последний код — каждый запрос «Получить код» делает предыдущий код недействительным."
+    if isinstance(exc, PhoneCodeExpiredError):
+        return "Код устарел. Нажмите «Отправить код ещё раз»."
+    if isinstance(exc, PhoneNumberInvalidError):
+        return "Некорректный номер телефона. Укажите его в международном формате, например +79991234567."
+    if isinstance(exc, PhoneNumberBannedError):
+        return "Этот номер заблокирован в Telegram."
+    if isinstance(exc, FloodWaitError):
+        minutes = max(1, exc.seconds // 60)
+        return f"Telegram временно ограничил попытки входа для этого номера. Повторите примерно через {minutes} мин."
+    return str(exc)
+
+
 async def begin_login(api_id: int, api_hash: str, phone: str) -> str:
     global telegram_client, auth_phone, auth_code_hash, auth_needs_password
     if telegram_client:
@@ -324,6 +347,8 @@ async def begin_login(api_id: int, api_hash: str, phone: str) -> str:
         return "authorized"
     if not phone:
         raise ValueError("Укажите номер телефона")
+    # A fresh code request invalidates whatever code was sent before, so any
+    # code the user is still holding from an earlier attempt stops working.
     sent = await telegram_client.send_code_request(phone)
     auth_phone, auth_code_hash = phone, sent.phone_code_hash
     auth_needs_password = False
@@ -340,6 +365,8 @@ async def finish_login(code: str, password: str = "") -> str:
         await telegram_client.sign_in(password=password)
         auth_needs_password = False
         return "authorized"
+    if not code:
+        raise ValueError("Введите код из Telegram")
     try:
         await telegram_client.sign_in(auth_phone, code, phone_code_hash=auth_code_hash)
     except SessionPasswordNeededError:
@@ -415,12 +442,16 @@ def auth_start():
             api_id, api_hash = config.get("api_id", ""), config.get("api_hash", "")
         if not api_id or not api_hash:
             return jsonify(error="Укажите API ID и API Hash с my.telegram.org"), 400
-        status = run_async(begin_login(int(api_id), api_hash, str(data.get("phone", "")).strip()))
+        try:
+            api_id_int = int(api_id)
+        except ValueError:
+            return jsonify(error="API ID должен быть числом"), 400
+        status = run_async(begin_login(api_id_int, api_hash, str(data.get("phone", "")).strip()))
         return jsonify(status=status)
-    except ValueError:
-        return jsonify(error="API ID должен быть числом, а номер телефона — заполнен"), 400
-    except Exception as exc:
+    except ValueError as exc:
         return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(error=friendly_auth_error(exc)), 400
 
 
 @app.post("/api/auth/verify")
@@ -429,8 +460,10 @@ def auth_verify():
     try:
         status = run_async(finish_login(str(data.get("code", "")).strip(), str(data.get("password", ""))))
         return jsonify(status=status)
-    except Exception as exc:
+    except ValueError as exc:
         return jsonify(error=str(exc)), 400
+    except Exception as exc:
+        return jsonify(error=friendly_auth_error(exc)), 400
 
 
 @app.get("/api/auth/status")
